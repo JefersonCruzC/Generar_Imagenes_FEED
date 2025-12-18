@@ -1,0 +1,32 @@
+name: Generar Imagenes Automaticamente
+on:
+  push:
+    paths:
+      - 'FEEDOM_REEMPLAZO.xlsx' # Se activa solo cuando subes este archivo
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar librerias
+        run: |
+          pip install pandas requests Pillow openpyxl tqdm
+
+      - name: Ejecutar Script de Python
+        run: python generar_imagenes.py
+
+      - name: Subir cambios a GitHub
+        run: |
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
+          git add docs/images/*.jpg FEED_ACTUALIZADO_CON_LINKS.xlsx
+          git commit -m "Automatización: Imágenes y Excel generados en la nube"
+          git push
