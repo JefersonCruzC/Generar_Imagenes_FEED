@@ -26,13 +26,14 @@ def conectar_sheets():
     # Extrae el JSON desde la variable de entorno de GitHub
     info_creds = json.loads(os.environ['GOOGLE_SHEETS_JSON'])
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keymap(info_creds, scope)
+    
+    # CORRECCIÓN AQUÍ: de from_json_keymap a from_json_keyfile_dict
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(info_creds, scope)
     client = gspread.authorize(creds)
     return client.open_by_key(SHEET_ID).sheet1
 
 def generar_pieza_grafica(row):
     try:
-        # Descarga rápida
         res_prod = requests.get(row['image_link'], headers=headers, timeout=5)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
         res_logo = requests.get(LOGO_URL, headers=headers, timeout=5)
@@ -41,7 +42,6 @@ def generar_pieza_grafica(row):
         canvas = Image.new('RGB', (900, 900), color='white')
         draw = ImageDraw.Draw(canvas)
 
-        # Diseño
         logo_img.thumbnail((350, 180), Image.Resampling.LANCZOS)
         canvas.paste(logo_img, ((900 - logo_img.width) // 2, 40), logo_img)
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
@@ -55,7 +55,6 @@ def generar_pieza_grafica(row):
         f_sim = ImageFont.truetype(font_path, 25)
         f_tachado = ImageFont.truetype(font_path, 22)
 
-        # Precios
         draw.rounded_rectangle([540, 710, 860, 810], radius=50, fill="white")
         precio_puro = str(row['sale_price']).replace(" PEN", "").strip()
         draw.text((570, 745), "S/ ", font=f_sim, fill="red")
@@ -65,7 +64,6 @@ def generar_pieza_grafica(row):
         draw.text((640, 815), precio_reg, font=f_tachado, fill="white")
         draw.line([640, 828, 760, 828], fill="white", width=2)
 
-        # Título
         lines = textwrap.wrap(str(row['title']), width=32)
         y_text = 725
         for line in lines[:3]:
@@ -83,21 +81,23 @@ print("Conectando a Google Sheets...")
 hoja = conectar_sheets()
 
 print("Leyendo Feed TXT (100k filas)...")
-# Leemos el TXT con separador de tabulación \t
 df = pd.read_csv(URL_FEED, sep='\t', low_memory=False)
 
-# LIMITACIÓN: Solo procesamos los primeros 500 para evitar que GitHub Actions muera por tiempo
-# Puedes subir este número a 1000 una vez veas que funciona
-df_chunk = df.head(500).copy()
+# Reemplazar valores nulos (NaN) para que Google Sheets no de error
+df = df.fillna("")
+
+# LIMITACIÓN: Procesamos un bloque manejable (Prueba con 500)
+df_chunk = df.head(200).copy()
 
 print(f"Generando imágenes para {len(df_chunk)} filas...")
 df_chunk['link_imagen_generada'] = df_chunk.apply(generar_pieza_grafica, axis=1)
 
 print("Enviando datos a Google Sheets...")
-# Preparamos los datos: encabezados + filas
+# Convertir todo a String para asegurar compatibilidad con JSON de la API
+df_chunk = df_chunk.astype(str)
 final_data = [df_chunk.columns.tolist()] + df_chunk.values.tolist()
 
-# Limpiamos la hoja y pegamos todo
+# Limpiamos y actualizamos de forma segura
 hoja.clear()
 hoja.update('A1', final_data)
 

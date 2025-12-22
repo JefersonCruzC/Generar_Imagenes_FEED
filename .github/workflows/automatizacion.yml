@@ -2,7 +2,7 @@ name: Automatizar Imagenes a Google Sheets
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Permite ejecutarlo manualmente
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,11 +20,10 @@ jobs:
 
       - name: Instalar librerias
         run: |
-          pip install pandas requests Pillow gspread oauth2client tqdm
+          pip install pandas requests Pillow gspread oauth2client tqdm openpyxl
 
       - name: Ejecutar Script de Python
         env:
-          # Esto jala el JSON que pegaste en los Secrets de GitHub
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
