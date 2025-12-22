@@ -1,15 +1,14 @@
-name: Generar Imagenes Automaticamente
+name: Automatizar Imagenes a Google Sheets
 on:
   push:
-    paths:
-      - 'FEEDOM_REEMPLAZO.xlsx'
-  workflow_dispatch: # Permite el botón de ejecución manual
+    branches: [ main ]
+  workflow_dispatch: # Permite ejecutarlo manualmente
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:         # <--- AÑADE ESTO
-      contents: write    # <--- AÑADE ESTO
+    permissions:
+      contents: write
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v3
@@ -21,15 +20,18 @@ jobs:
 
       - name: Instalar librerias
         run: |
-          pip install pandas requests Pillow openpyxl tqdm
+          pip install pandas requests Pillow gspread oauth2client tqdm
 
       - name: Ejecutar Script de Python
+        env:
+          # Esto jala el JSON que pegaste en los Secrets de GitHub
+          GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
-      - name: Subir cambios a GitHub
+      - name: Subir imágenes a GitHub Pages
         run: |
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
-          git add docs/images/*.jpg FEED_ACTUALIZADO_CON_LINKS.xlsx
-          git commit -m "Automatización: Imágenes y Excel generados en la nube" || echo "No hay cambios para subir"
+          git add docs/images/*.jpg
+          git commit -m "Nuevas imágenes generadas" || echo "Sin cambios"
           git push
