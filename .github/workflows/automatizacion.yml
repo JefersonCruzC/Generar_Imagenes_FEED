@@ -9,14 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pages: write      # Permiso para publicar
-      id-token: write   # Permiso de seguridad
+      pages: write      
+      id-token: write   
     steps:
       - name: Checkout del repositorio
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Actualizado a v4
 
       - name: Configurar Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Actualizado a v5
         with:
           python-version: '3.9'
 
@@ -29,10 +29,10 @@ jobs:
         run: python generar_imagenes.py
 
       - name: Subir imágenes como Artefacto
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v3 # Actualizado a v3 (compatible con v4 de artifacts)
         with:
-          path: 'docs/' # Sube toda la carpeta docs (donde están las imágenes)
+          path: 'docs/' 
 
       - name: Desplegar a GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v2
+        uses: actions/deploy-pages@v4 # Actualizado a v4
