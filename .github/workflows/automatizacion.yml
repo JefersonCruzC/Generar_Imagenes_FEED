@@ -1,19 +1,19 @@
 name: Automatizar Imagenes a Google Sheets
 on:
   schedule:
-    - cron: '0 13 * * *' # 8:00 AM hora Perú (UTC-5)
-  workflow_dispatch: # Permite ejecución manual
+    - cron: '0 13 * * *' # 8:00 AM hora Perú
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pages: write      # Permiso para publicar
+      id-token: write   # Permiso de seguridad
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 1 # Descarga rápida sin historial pesado
 
       - name: Configurar Python
         uses: actions/setup-python@v4
@@ -21,25 +21,18 @@ jobs:
           python-version: '3.9'
 
       - name: Instalar dependencias
-        run: |
-          pip install pandas requests Pillow gspread oauth2client tqdm
+        run: pip install pandas requests Pillow gspread oauth2client tqdm
 
       - name: Ejecutar procesamiento de imágenes
         env:
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
-      - name: Limpiar y subir imágenes a GitHub Pages
-        run: |
-          git config --global user.name 'GitHub Actions'
-          git config --global user.email 'actions@github.com'
-          
-          # 1. Eliminar rastro de imágenes anteriores en Git
-          git rm -rf docs/images/*.jpg || echo "Sin imágenes previas"
-          
-          # 2. Agregar nuevas imágenes
-          git add docs/images/*.jpg
-          
-          # 3. Commit y Push forzado para mantener el repositorio pequeño
-          git commit -m "Actualización diaria: $(date +'%Y-%m-%d')" || echo "Sin cambios"
-          git push --force origin main
+      - name: Subir imágenes como Artefacto
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: 'docs/' # Sube toda la carpeta docs (donde están las imágenes)
+
+      - name: Desplegar a GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
