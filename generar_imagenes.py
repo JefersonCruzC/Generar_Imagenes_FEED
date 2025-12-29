@@ -119,7 +119,7 @@ if __name__ == "__main__":
     with ThreadPoolExecutor(max_workers=20) as executor:
         resultados = list(tqdm(executor.map(generar_pieza_grafica, rows), total=len(rows)))
 
-    df['link_imagen_generada'] = resultados
+    df['additional_image_link'] = resultados
 
     print("Limpiando y actualizando Google Sheets...")
     # Convertir todo a string para evitar errores de JSON en la API de Google
