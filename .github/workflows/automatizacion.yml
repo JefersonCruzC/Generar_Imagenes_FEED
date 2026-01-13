@@ -2,9 +2,10 @@ name: Automatizar Imagenes a Google Sheets
 
 on:
   schedule:
-    - cron: '0 13 * * *' # 8:00 AM hora Perú
-    - cron: '0 20 * * *' # 3:00 PM hora Perú
-    - cron: '0 1 * * *'  # 8:00 PM hora Perú
+    - cron: '04 09 * * *'  # 4:04 AM hora Perú
+    - cron: '07 13 * * *'  # 8:07 AM hora Perú
+    - cron: '12 20 * * *'  # 3:12 PM hora Perú
+    - cron: '05 01 * * *'  # 8:05 PM hora Perú
   workflow_dispatch:
 
 jobs:
