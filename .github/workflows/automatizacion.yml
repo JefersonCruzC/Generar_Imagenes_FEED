@@ -2,14 +2,13 @@ name: Automatizar Imagenes a Google Sheets
 
 on:
   schedule:
-    - cron: '06 11 * * *'  # 6:06 AM hora Perú
-
+    - cron: '06 11 * * *' # 6:06 AM hora Perú
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90 # Seguridad por si el proceso se traba
+    timeout-minutes: 120 # Aumentado por seguridad para la primera corrida
     permissions:
       contents: write
       pages: write      
@@ -17,6 +16,15 @@ jobs:
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
+
+      # ESTE PASO ES NUEVO: Mantiene las imágenes entre ejecuciones
+      - name: Cache de imagenes
+        uses: actions/cache@v4
+        with:
+          path: docs/images
+          key: images-cache-${{ github.run_id }}
+          restore-keys: |
+            images-cache-
 
       - name: Configurar Python
         uses: actions/setup-python@v5
