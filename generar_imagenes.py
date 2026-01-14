@@ -47,14 +47,9 @@ def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # 1. SALTO INTELIGENTE: Si el precio no cambió y la imagen existe, no hacer nada
+    # 1. SALTO INTELIGENTE
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
-
-    # 2. FILTRO DE FORMATO SILENCIOSO
-    link = str(row.get('image_link', '')).lower()
-    if not (link.endswith('.jpg') or link.endswith('.jpeg')):
-        return "" # Ya no pone "Error: Formato"
 
     try:
         res_prod = requests.get(row['image_link'], headers=headers, timeout=5)
@@ -87,7 +82,7 @@ def generar_pieza_grafica(row):
         canvas.save(target_path, "JPEG", quality=65)
         return URL_BASE_PAGES + file_name
     except:
-        return "" # Error silencioso
+        return ""
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
@@ -95,44 +90,53 @@ if __name__ == "__main__":
     print("Obteniendo memoria de precios desde Google Sheets...")
     try:
         data_actual = hoja.get_all_records()
-        # Creamos memoria de ID -> (sale_price, price)
         cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
     except Exception as e:
-        print(f"No se pudo cargar caché (primera ejecución?): {e}")
+        print(f"Caché no disponible: {e}")
         cache_precios = {}
 
-    print("Descargando Feed y filtrando por Stock...")
+    print("Descargando Feed y aplicando filtros...")
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     
-    # FILTRO: Solo considerar 'in stock'
-    df = df_raw[df_raw['availability'].str.lower() == 'in stock'].copy()
-    print(f"Filas originales: {len(df_raw)} -> Filas con stock: {len(df)}")
+    # FILTROS COMBINADOS: 
+    # 1. Disponibilidad 'in stock'
+    # 2. image_link NO vacío
+    # 3. image_link NO termina en .png
+    df = df_raw[
+        (df_raw['availability'].str.lower() == 'in stock') & 
+        (df_raw['image_link'] != "") & 
+        (~df_raw['image_link'].str.lower().str.endswith('.png'))
+    ].copy()
+    
+    print(f"Filas procesables: {len(df)} (Se descartaron {len(df_raw) - len(df)} por stock, vacío o PNG)")
 
-    # Lógica de comparación de precios
+    # Lógica de comparación
     def verificar_cambio(row):
         item_id = str(row['id'])
         if item_id in cache_precios:
             old_sale, old_reg = cache_precios[item_id]
             if str(row['sale_price']) == old_sale and str(row['price']) == old_reg:
-                return True # No cambió nada
+                return True
         return False
 
     df['SKIP_GENERATE'] = df.apply(verificar_cambio, axis=1)
     
     num_cambios = len(df[df['SKIP_GENERATE'] == False])
-    print(f"Productos nuevos o con cambios: {num_cambios}. Saltando {len(df) - num_cambios} imágenes.")
+    print(f"Cambios detectados: {num_cambios}. Usando {len(df) - num_cambios} imágenes de caché.")
 
     rows_to_process = df.to_dict('records')
     with ThreadPoolExecutor(max_workers=50) as executor:
         resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df)))
 
     df['additional_image_link'] = resultados
-    df_final = df.drop(columns=['SKIP_GENERATE']).astype(str)
     
-    print("Subiendo a Google Sheets...")
+    # Eliminar filas donde la generación falló (resultado vacío) para limpiar el Sheets
+    df_final = df[df['additional_image_link'] != ""].drop(columns=['SKIP_GENERATE']).astype(str)
+    
+    print(f"Subiendo {len(df_final)} filas a Google Sheets...")
     lista_final = [df_final.columns.tolist()] + df_final.values.tolist()
     hoja.clear()
     for i in range(0, len(lista_final), 10000):
         hoja.append_rows(lista_final[i:i+10000], value_input_option='RAW')
 
-    print(f"¡Proceso completado! Total en hoja: {len(df)}")
+    print(f"¡Proceso completado! Tiempo ahorrado gracias al caché y filtros.")
