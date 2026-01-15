@@ -6,6 +6,7 @@ import os
 import textwrap
 import gspread
 import json
+import time  # Para manejar las pausas de seguridad
 from oauth2client.service_account import ServiceAccountCredentials
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
@@ -90,7 +91,6 @@ if __name__ == "__main__":
     print("Obteniendo memoria de precios desde Google Sheets...")
     try:
         data_actual = hoja.get_all_records()
-        # Mantenemos caché comparando el valor numérico
         cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
     except:
         cache_precios = {}
@@ -110,8 +110,9 @@ if __name__ == "__main__":
     def verificar_cambio(row):
         item_id = str(row['id'])
         if item_id in cache_precios:
-            old_sale, old_reg = cache_precios[item_id]
-            if str(row['sale_price']) == old_sale and str(row['price']) == old_reg:
+            # Comparamos ignorando el parámetro ?v= del cache
+            old_sale_raw = cache_precios[item_id][0].split('?v=')[0]
+            if str(row['sale_price']) == old_sale_raw and str(row['price']) == cache_precios[item_id][1]:
                 return True
         return False
 
@@ -124,7 +125,6 @@ if __name__ == "__main__":
         resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df)))
 
     # IMPLEMENTACIÓN CACHE BUSTING:
-    # Agregamos ?v=[precio] al final del link. Si el precio cambia, Meta detecta una URL nueva y descarga.
     df['image_link'] = [
         f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" 
         for res, row in zip(resultados, rows_to_process)
@@ -138,11 +138,21 @@ if __name__ == "__main__":
     
     df_final = df[df['image_link'] != ""][columnas_deseadas].astype(str)
     
-    print(f"Subiendo {len(df_final)} filas a la Hoja 1 con Cache Busting...")
+    print(f"Subiendo {len(df_final)} filas a la Hoja 1 con bloques de seguridad...")
     lista_final = [df_final.columns.tolist()] + df_final.values.tolist()
     
+    # 1. Limpiar hoja
     hoja.clear()
-    for i in range(0, len(lista_final), 10000):
-        hoja.append_rows(lista_final[i:i+10000], value_input_option='RAW')
+    
+    # 2. Subir en bloques de 5,000 con pausas para evitar Error 502
+    for i in range(0, len(lista_final), 5000):
+        try:
+            hoja.append_rows(lista_final[i:i+5000], value_input_option='RAW')
+            print(f"Bloque {i} subido. Pausando 2s...")
+            time.sleep(2)
+        except Exception as e:
+            print(f"Error 502 o saturación detectada en bloque {i}. Reintentando en 10s...")
+            time.sleep(10)
+            hoja.append_rows(lista_final[i:i+5000], value_input_option='RAW')
 
-    print("¡Proceso completado exitosamente con Cache Busting!")
+    print("¡Proceso completado exitosamente!")
