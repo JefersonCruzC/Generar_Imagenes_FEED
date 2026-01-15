@@ -47,12 +47,13 @@ def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # 1. SALTO INTELIGENTE
+    # 1. SALTO INTELIGENTE: Si el precio no cambió y el archivo ya existe en el disco del runner
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
     try:
-        res_prod = requests.get(row['image_link'], headers=headers, timeout=5)
+        # Aquí se usa el link original del feed para descargar
+        res_prod = requests.get(row['original_image_url'], headers=headers, timeout=5)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
         canvas = Image.new('RGB', (900, 900), color='white')
         draw = ImageDraw.Draw(canvas)
@@ -90,27 +91,25 @@ if __name__ == "__main__":
     print("Obteniendo memoria de precios desde Google Sheets...")
     try:
         data_actual = hoja.get_all_records()
+        # Se asocia el ID con el sale_price y price actuales en la hoja
         cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
-    except Exception as e:
-        print(f"Caché no disponible: {e}")
+    except:
         cache_precios = {}
 
-    print("Descargando Feed y aplicando filtros...")
+    print("Descargando Feed y filtrando...")
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     
-    # FILTROS COMBINADOS: 
-    # 1. Disponibilidad 'in stock'
-    # 2. image_link NO vacío
-    # 3. image_link NO termina en .png
+    # Filtros: Stock 'in stock' y excluir enlaces .png o vacíos
     df = df_raw[
         (df_raw['availability'].str.lower() == 'in stock') & 
+        (df_raw['image_link'].notnull()) & 
         (df_raw['image_link'] != "") & 
         (~df_raw['image_link'].str.lower().str.endswith('.png'))
     ].copy()
     
-    print(f"Filas procesables: {len(df)} (Se descartaron {len(df_raw) - len(df)} por stock, vacío o PNG)")
+    # Guardamos la URL original en una columna temporal para la descarga
+    df['original_image_url'] = df['image_link']
 
-    # Lógica de comparación
     def verificar_cambio(row):
         item_id = str(row['id'])
         if item_id in cache_precios:
@@ -121,22 +120,31 @@ if __name__ == "__main__":
 
     df['SKIP_GENERATE'] = df.apply(verificar_cambio, axis=1)
     
-    num_cambios = len(df[df['SKIP_GENERATE'] == False])
-    print(f"Cambios detectados: {num_cambios}. Usando {len(df) - num_cambios} imágenes de caché.")
+    print(f"Procesando {len(df)} filas con filtros aplicados.")
 
     rows_to_process = df.to_dict('records')
     with ThreadPoolExecutor(max_workers=50) as executor:
+        # La función devolverá la URL de GitHub Pages
         resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df)))
 
-    df['additional_image_link'] = resultados
+    # Sobrescribimos la columna original image_link con el nuevo link limpio
+    df['image_link'] = resultados
     
-    # Eliminar filas donde la generación falló (resultado vacío) para limpiar el Sheets
-    df_final = df[df['additional_image_link'] != ""].drop(columns=['SKIP_GENERATE']).astype(str)
+    # Filtramos filas donde la imagen falló y seleccionamos columnas finales
+    # Se eliminan: 'additional_image_link', 'SKIP_GENERATE' y 'original_image_url'
+    columnas_deseadas = [
+        'id', 'title', 'link', 'price', 'sale_price', 'availability', 
+        'description', 'image_link', 'condition', 'brand', 
+        'google_product_category', 'product_type'
+    ]
     
-    print(f"Subiendo {len(df_final)} filas a Google Sheets...")
+    df_final = df[df['image_link'] != ""][columnas_deseadas].astype(str)
+    
+    print(f"Subiendo {len(df_final)} filas a la Hoja 1...")
     lista_final = [df_final.columns.tolist()] + df_final.values.tolist()
+    
     hoja.clear()
     for i in range(0, len(lista_final), 10000):
         hoja.append_rows(lista_final[i:i+10000], value_input_option='RAW')
 
-    print(f"¡Proceso completado! Tiempo ahorrado gracias al caché y filtros.")
+    print("¡Proceso completado exitosamente!")
