@@ -47,12 +47,11 @@ def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # 1. SALTO INTELIGENTE: Si el precio no cambió y el archivo ya existe en el disco del runner
+    # SALTO INTELIGENTE: Si el precio no cambió y el archivo ya existe
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
     try:
-        # Aquí se usa el link original del feed para descargar
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=5)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
         canvas = Image.new('RGB', (900, 900), color='white')
@@ -91,7 +90,7 @@ if __name__ == "__main__":
     print("Obteniendo memoria de precios desde Google Sheets...")
     try:
         data_actual = hoja.get_all_records()
-        # Se asocia el ID con el sale_price y price actuales en la hoja
+        # Mantenemos caché comparando el valor numérico
         cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
     except:
         cache_precios = {}
@@ -99,7 +98,6 @@ if __name__ == "__main__":
     print("Descargando Feed y filtrando...")
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     
-    # Filtros: Stock 'in stock' y excluir enlaces .png o vacíos
     df = df_raw[
         (df_raw['availability'].str.lower() == 'in stock') & 
         (df_raw['image_link'].notnull()) & 
@@ -107,7 +105,6 @@ if __name__ == "__main__":
         (~df_raw['image_link'].str.lower().str.endswith('.png'))
     ].copy()
     
-    # Guardamos la URL original en una columna temporal para la descarga
     df['original_image_url'] = df['image_link']
 
     def verificar_cambio(row):
@@ -120,18 +117,19 @@ if __name__ == "__main__":
 
     df['SKIP_GENERATE'] = df.apply(verificar_cambio, axis=1)
     
-    print(f"Procesando {len(df)} filas con filtros aplicados.")
-
     rows_to_process = df.to_dict('records')
+    print(f"Procesando {len(df)} filas. Detectados {len(df[df['SKIP_GENERATE'] == False])} cambios.")
+
     with ThreadPoolExecutor(max_workers=50) as executor:
-        # La función devolverá la URL de GitHub Pages
         resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df)))
 
-    # Sobrescribimos la columna original image_link con el nuevo link limpio
-    df['image_link'] = resultados
+    # IMPLEMENTACIÓN CACHE BUSTING:
+    # Agregamos ?v=[precio] al final del link. Si el precio cambia, Meta detecta una URL nueva y descarga.
+    df['image_link'] = [
+        f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" 
+        for res, row in zip(resultados, rows_to_process)
+    ]
     
-    # Filtramos filas donde la imagen falló y seleccionamos columnas finales
-    # Se eliminan: 'additional_image_link', 'SKIP_GENERATE' y 'original_image_url'
     columnas_deseadas = [
         'id', 'title', 'link', 'price', 'sale_price', 'availability', 
         'description', 'image_link', 'condition', 'brand', 
@@ -140,11 +138,11 @@ if __name__ == "__main__":
     
     df_final = df[df['image_link'] != ""][columnas_deseadas].astype(str)
     
-    print(f"Subiendo {len(df_final)} filas a la Hoja 1...")
+    print(f"Subiendo {len(df_final)} filas a la Hoja 1 con Cache Busting...")
     lista_final = [df_final.columns.tolist()] + df_final.values.tolist()
     
     hoja.clear()
     for i in range(0, len(lista_final), 10000):
         hoja.append_rows(lista_final[i:i+10000], value_input_option='RAW')
 
-    print("¡Proceso completado exitosamente!")
+    print("¡Proceso completado exitosamente con Cache Busting!")
