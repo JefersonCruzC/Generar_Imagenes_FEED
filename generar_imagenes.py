@@ -16,7 +16,6 @@ URL_FEED = "https://juntozstgsrvproduction.blob.core.windows.net/juntoz-feeds/go
 SHEET_ID = "1KcN52kIvCOfmIMIbvIKEXHNALZ-tRpAqxo6Hg-JmbTw"
 USUARIO_GITHUB = "JefersonCruzC" 
 REPO_NOMBRE = "Generar_Imagenes_FEED" 
-# NOTA: Cambiamos la ruta base para que apunte a los nuevos nombres _jz.jpg
 URL_BASE_PAGES = f"https://{USUARIO_GITHUB}.github.io/{REPO_NOMBRE}/images/"
 
 LOGO_PATH = "logojuntozblanco.png" 
@@ -44,19 +43,14 @@ def conectar_sheets():
             return client.open_by_key(SHEET_ID).sheet1
         except Exception as e:
             intentos += 1
-            print(f"Error de conexión ({e}). Reintento {intentos}/3 en 15s...")
             time.sleep(15)
     raise Exception("No se pudo conectar a Google Sheets.")
 
 def generar_pieza_grafica(row):
-    # NUEVO NOMBRE: Agregamos _jz para forzar la actualización en Meta/Google
+    # Sufijo _jz para forzar actualización visual
     file_name = f"{row['id']}_jz.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # FORZADO: Comentamos el salto inteligente para asegurar que rediseñe TODO con el fondo morado
-    # if row.get('SKIP_GENERATE') and os.path.exists(target_path):
-    #     return URL_BASE_PAGES + file_name
-
     try:
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
@@ -65,59 +59,41 @@ def generar_pieza_grafica(row):
         color_morado = (141, 54, 197)
         canvas = Image.new('RGB', (900, 900), color=color_morado)
         draw = ImageDraw.Draw(canvas)
-        
-        # 2. CONTENEDOR BLANCO
         draw.rounded_rectangle([50, 50, 850, 680], radius=65, fill="white")
         
-        # 3. PESTAÑA LOGO
+        # 2. PESTAÑA LOGO
         altura_pestana = 115
         draw.rounded_rectangle([560, 0, 900, altura_pestana], radius=35, fill=color_morado)
         
-        # 4. LOGO
         if LOGO_GLOBAL_ORIGINAL:
             logo_w, logo_h = LOGO_GLOBAL_ORIGINAL.size
             nuevo_logo_w = 260
             logo_ready = LOGO_GLOBAL_ORIGINAL.resize((nuevo_logo_w, int((nuevo_logo_w/logo_w)*logo_h)), Image.Resampling.LANCZOS)
             canvas.paste(logo_ready, (560 + (340 - nuevo_logo_w)//2, (altura_pestana - logo_ready.height)//2), logo_ready)
         
-        # 5. PRODUCTO
+        # 3. IMAGEN PRODUCTO
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # 6. FUENTES
-        brand_sz, title_sz = 38, 30
-        f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
-        f_title = ImageFont.truetype(FONT_OBLIQUE, title_sz)
+        # 4. FUENTES
+        f_brand = ImageFont.truetype(FONT_BOLD, 38)
+        f_title = ImageFont.truetype(FONT_OBLIQUE, 30)
         f_reg_txt = ImageFont.truetype(FONT_REGULAR, 30)
         f_sale_val = ImageFont.truetype(FONT_BOLD, 120)
         f_simbolo = ImageFont.truetype(FONT_BOLD, 62)
 
-        # 7. MARCA
+        # 5. TEXTOS
         brand_txt = str(row.get('brand', '')).upper().strip()
-        while draw.textlength(brand_txt, font=f_brand) > 480 and brand_sz > 22:
-            brand_sz -= 2
-            f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
         draw.text((60, 720), brand_txt, font=f_brand, fill="white")
         
-        # 8. TITULO
         titulo = str(row.get('title', 'Producto')).strip()
-        def fit_text(text, font, size, limit_w):
-            w_wrap = 28
-            lines = textwrap.wrap(text, width=w_wrap)
-            while (len(lines) > 3 or any(draw.textlength(l, font=font) > limit_w for l in lines)) and size > 20:
-                size -= 2
-                font = ImageFont.truetype(FONT_OBLIQUE, size)
-                w_wrap += 2
-                lines = textwrap.wrap(text, width=w_wrap)
-            return lines, font, size
-
-        lines, f_title, title_sz = fit_text(titulo, f_title, title_sz, 500)
+        lines = textwrap.wrap(titulo, width=28)
         y_txt = 770
         for line in lines[:3]:
             draw.text((60, y_txt), line, font=f_title, fill="white")
-            y_txt += (title_sz + 6)
+            y_txt += 36
 
-        # 9. PRECIOS
+        # 6. PRECIOS
         p_reg = f"Precio regular: S/{str(row.get('price','0')).replace(' PEN','')}"
         draw.text((840 - draw.textlength(p_reg, font=f_reg_txt), 725), p_reg, font=f_reg_txt, fill="white")
         
@@ -133,39 +109,25 @@ def generar_pieza_grafica(row):
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
-    
-    print("Descargando Feed completo...")
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
-    df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
-    df_full['original_image_url'] = df_full['image_link']
     
-    total_filas = len(df_full)
-    tamano_lote = 12000 
-    print(f"Iniciando proceso por lotes. Total: {total_filas} productos.")
-
+    # --- FILTRO DE PRUEBA: SOLO 100 PRODUCTOS ---
+    df_test = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].head(100).copy()
+    df_test['original_image_url'] = df_test['image_link']
+    
     hoja.clear()
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
     hoja.append_rows([encabezados], value_input_option='RAW')
 
-    for inicio in range(0, total_filas, tamano_lote):
-        fin = min(inicio + tamano_lote, total_filas)
-        df_lote = df_full.iloc[inicio:fin].copy()
-        rows_to_process = df_lote.to_dict('records')
-        
-        print(f"--- Procesando Lote {inicio} a {fin} ---")
-        with ThreadPoolExecutor(max_workers=40) as executor:
-            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
+    print(f"Iniciando prueba con {len(df_test)} productos...")
+    rows_to_process = df_test.to_dict('records')
+    
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_test)))
 
-        # Aplicar Cache Busting
-        df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
-        df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
-        
-        hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
-        print(f"Lote {inicio}-{fin} guardado. Limpiando espacio temporal...")
-        
-        for f in os.listdir(output_dir):
-            if f.endswith(".jpg"):
-                os.remove(os.path.join(output_dir, f))
-        time.sleep(2)
-
-    print("¡Catálogo actualizado con éxito con el nuevo nombre de archivo!")
+    df_test['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+    df_subir = df_test[df_test['image_link'] != ""][encabezados].astype(str)
+    
+    hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
+    
+    print("¡Prueba de 100 productos completada! GitHub Pages iniciará el despliegue.")
