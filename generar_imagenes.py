@@ -50,6 +50,7 @@ def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
+    # Salto inteligente: Si el archivo existe y el precio no ha cambiado, no trabajamos de más
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
@@ -119,7 +120,7 @@ def generar_pieza_grafica(row):
 if __name__ == "__main__":
     hoja = conectar_sheets()
     
-    print("Obteniendo memoria de precios para Salto Inteligente...")
+    print("Obteniendo memoria de precios...")
     try:
         data_actual = hoja.get_all_records()
         cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
@@ -131,7 +132,7 @@ if __name__ == "__main__":
     df_full['original_image_url'] = df_full['image_link']
     
     df_full['SKIP_GENERATE'] = df_full.apply(lambda r: str(r['id']) in cache_precios and 
-                                   cache_precios[str(r['id'])][0].split('?v=')[0] == str(r['sale_price']) and 
+                                   cache_precios[str(r['id'])][0].split('?brand=')[0].split('?v=')[0] == str(r['sale_price']) and 
                                    cache_precios[str(r['id'])][1] == str(r['price']), axis=1)
 
     total_filas = len(df_full)
@@ -149,7 +150,7 @@ if __name__ == "__main__":
         with ThreadPoolExecutor(max_workers=40) as executor:
             resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
 
-        # NUEVO: Generamos el link con Brand y Sale Price para forzar actualización
+        # URL Enriquecida con Brand y V para forzar actualización en Redes Sociales
         df_lote['image_link'] = [
             f"{res}?brand={str(row['brand']).replace(' ', '')}&v={str(row['sale_price']).replace(' ', '')}" 
             if res != "" else "" for res, row in zip(resultados, rows_to_process)

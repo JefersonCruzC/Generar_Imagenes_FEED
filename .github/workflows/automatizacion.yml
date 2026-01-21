@@ -15,7 +15,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90 
+    timeout-minutes: 120 # Aumentado para carga masiva inicial
     permissions:
       contents: write
       pages: write      
@@ -35,7 +35,7 @@ jobs:
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Actualizado para mayor estabilidad
+          python-version: '3.10'
 
       - name: Instalar dependencias
         run: |
