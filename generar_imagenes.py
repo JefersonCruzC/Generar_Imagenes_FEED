@@ -47,10 +47,13 @@ def conectar_sheets():
     raise Exception("No se pudo conectar a Google Sheets.")
 
 def generar_pieza_grafica(row):
-    # Usamos _juntoz.jpg para romper el caché definitivamente
-    file_name = f"{row['id']}_juntoz.jpg"
+    file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
+    # --- SALTO INTELIGENTE ---
+    if row.get('SKIP_GENERATE') and os.path.exists(target_path):
+        return URL_BASE_PAGES + file_name
+
     try:
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
@@ -71,9 +74,7 @@ def generar_pieza_grafica(row):
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # --- LÓGICA DINÁMICA DE TEXTOS ---
-        
-        # 1. Marca (Brand) - Reducción automática si excede 450px
+        # 1. Marca Dinámica
         brand_txt = str(row.get('brand', '')).upper().strip()
         brand_sz = 38
         f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
@@ -91,29 +92,21 @@ def generar_pieza_grafica(row):
             t_sz -= 2
             f_title = ImageFont.truetype(FONT_OBLIQUE, t_sz)
             lines = textwrap.wrap(titulo, width=32)
-        
         y_t = 770
         for line in lines[:3]:
             draw.text((60, y_t), line, font=f_title, fill="white")
             y_t += (t_sz + 6)
 
-        # 3. Precio de Venta (Grande) Dinámico
+        # 3. Precio de Venta Dinámico
         p_sale_val = str(row.get('sale_price','0')).replace(' PEN','').strip()
         s_sz, simb_sz = 120, 62
         f_s = ImageFont.truetype(FONT_BOLD, s_sz)
         f_sm = ImageFont.truetype(FONT_BOLD, simb_sz)
-        
-        # Si el precio es muy largo (ej: S/ 1,229.00), achicamos
         while draw.textlength(p_sale_val, font=f_s) > 340 and s_sz > 85:
             s_sz -= 5
             simb_sz -= 3
-            f_s = ImageFont.truetype(FONT_BOLD, s_sz)
-            f_sm = ImageFont.truetype(FONT_BOLD, simb_sz)
-            
-        w_s = draw.textlength(p_sale_val, font=f_s)
-        w_sm = draw.textlength("S/", font=f_sm)
-        
-        # Dibujamos con ajuste de posición vertical según el tamaño
+            f_s, f_sm = ImageFont.truetype(FONT_BOLD, s_sz), ImageFont.truetype(FONT_BOLD, simb_sz)
+        w_s, w_sm = draw.textlength(p_sale_val, font=f_s), draw.textlength("S/", font=f_sm)
         draw.text((840 - w_s - w_sm - 8, 765 + (62-simb_sz)//2), "S/", font=f_sm, fill="white")
         draw.text((840 - w_s, 760 + (120-s_sz)//2), p_sale_val, font=f_s, fill="white")
 
@@ -133,22 +126,42 @@ def generar_pieza_grafica(row):
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
-    df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     
-    # --- PRUEBA DE 100 PRODUCTOS PARA FORZAR DEPLOY ---
-    df_test = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].head(100).copy()
-    df_test['original_image_url'] = df_test['image_link']
+    print("Obteniendo memoria de precios...")
+    try:
+        data_actual = hoja.get_all_records()
+        cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
+    except:
+        cache_precios = {}
+
+    df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
+    df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
+    df_full['original_image_url'] = df_full['image_link']
+    
+    # Lógica de Salto Inteligente
+    df_full['SKIP_GENERATE'] = df_full.apply(lambda r: str(r['id']) in cache_precios and 
+                                   cache_precios[str(r['id'])][0].split('?v=')[0] == str(r['sale_price']) and 
+                                   cache_precios[str(r['id'])][1] == str(r['price']), axis=1)
+
+    total_filas = len(df_full)
+    tamano_lote = 15000 
     
     hoja.clear()
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
     hoja.append_rows([encabezados], value_input_option='RAW')
 
-    rows_to_process = df_test.to_dict('records')
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_test)))
+    for inicio in range(0, total_filas, tamano_lote):
+        fin = min(inicio + tamano_lote, total_filas)
+        df_lote = df_full.iloc[inicio:fin].copy()
+        rows_to_process = df_lote.to_dict('records')
+        
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
 
-    df_test['image_link'] = [f"{res}?v=v2" if res != "" else "" for res in resultados]
-    df_subir = df_test[df_test['image_link'] != ""][encabezados].astype(str)
-    
-    hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
-    print("¡Proceso completado! Mantén abierta la pestaña de Actions para ver el despliegue de Pages.")
+        df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+        df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
+        
+        hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
+        time.sleep(2)
+        
+    print("¡Proceso masivo completado!")
