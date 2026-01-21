@@ -16,9 +16,9 @@ URL_FEED = "https://juntozstgsrvproduction.blob.core.windows.net/juntoz-feeds/go
 SHEET_ID = "1KcN52kIvCOfmIMIbvIKEXHNALZ-tRpAqxo6Hg-JmbTw"
 USUARIO_GITHUB = "JefersonCruzC" 
 REPO_NOMBRE = "Generar_Imagenes_FEED" 
+# NOTA: Cambiamos la ruta base para que apunte a los nuevos nombres _jz.jpg
 URL_BASE_PAGES = f"https://{USUARIO_GITHUB}.github.io/{REPO_NOMBRE}/images/"
 
-# Archivos locales en el repositorio
 LOGO_PATH = "logojuntozblanco.png" 
 FONT_BOLD = "HurmeGeometricSans1 Bold.otf"
 FONT_OBLIQUE = "HurmeGeometricSans1 Oblique.otf"
@@ -28,7 +28,6 @@ output_dir = "docs/images"
 os.makedirs(output_dir, exist_ok=True)
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-# Cargar logo globalmente
 try:
     LOGO_GLOBAL_ORIGINAL = Image.open(LOGO_PATH).convert("RGBA")
 except:
@@ -50,12 +49,13 @@ def conectar_sheets():
     raise Exception("No se pudo conectar a Google Sheets.")
 
 def generar_pieza_grafica(row):
-    file_name = f"{row['id']}.jpg"
+    # NUEVO NOMBRE: Agregamos _jz para forzar la actualización en Meta/Google
+    file_name = f"{row['id']}_jz.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # SALTO INTELIGENTE: Si ya existe y el precio no cambió, no trabajar de más
-    if row.get('SKIP_GENERATE') and os.path.exists(target_path):
-        return URL_BASE_PAGES + file_name
+    # FORZADO: Comentamos el salto inteligente para asegurar que rediseñe TODO con el fondo morado
+    # if row.get('SKIP_GENERATE') and os.path.exists(target_path):
+    #     return URL_BASE_PAGES + file_name
 
     try:
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
@@ -73,7 +73,7 @@ def generar_pieza_grafica(row):
         altura_pestana = 115
         draw.rounded_rectangle([560, 0, 900, altura_pestana], radius=35, fill=color_morado)
         
-        # 4. LOGO (Escalado a 900px)
+        # 4. LOGO
         if LOGO_GLOBAL_ORIGINAL:
             logo_w, logo_h = LOGO_GLOBAL_ORIGINAL.size
             nuevo_logo_w = 260
@@ -84,7 +84,7 @@ def generar_pieza_grafica(row):
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # 6. FUENTES ADAPTADAS
+        # 6. FUENTES
         brand_sz, title_sz = 38, 30
         f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
         f_title = ImageFont.truetype(FONT_OBLIQUE, title_sz)
@@ -92,14 +92,14 @@ def generar_pieza_grafica(row):
         f_sale_val = ImageFont.truetype(FONT_BOLD, 120)
         f_simbolo = ImageFont.truetype(FONT_BOLD, 62)
 
-        # 7. MARCA ADAPTATIVA
+        # 7. MARCA
         brand_txt = str(row.get('brand', '')).upper().strip()
         while draw.textlength(brand_txt, font=f_brand) > 480 and brand_sz > 22:
             brand_sz -= 2
             f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
         draw.text((60, 720), brand_txt, font=f_brand, fill="white")
         
-        # 8. TITULO ADAPTATIVO
+        # 8. TITULO
         titulo = str(row.get('title', 'Producto')).strip()
         def fit_text(text, font, size, limit_w):
             w_wrap = 28
@@ -134,28 +134,15 @@ def generar_pieza_grafica(row):
 if __name__ == "__main__":
     hoja = conectar_sheets()
     
-    print("Obteniendo memoria de precios...")
-    try:
-        data_actual = hoja.get_all_records()
-        cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
-    except:
-        cache_precios = {}
-
     print("Descargando Feed completo...")
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
     df_full['original_image_url'] = df_full['image_link']
     
-    # Determinar qué productos necesitan regenerarse
-    df_full['SKIP_GENERATE'] = df_full.apply(lambda r: str(r['id']) in cache_precios and 
-                                   cache_precios[str(r['id'])][0].split('?v=')[0] == str(r['sale_price']) and 
-                                   cache_precios[str(r['id'])][1] == str(r['price']), axis=1)
-
     total_filas = len(df_full)
-    tamano_lote = 12000 # Procesamos en bloques para cuidar el disco
+    tamano_lote = 12000 
     print(f"Iniciando proceso por lotes. Total: {total_filas} productos.")
 
-    # Limpiar hoja al inicio e insertar encabezados
     hoja.clear()
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
     hoja.append_rows([encabezados], value_input_option='RAW')
@@ -173,14 +160,12 @@ if __name__ == "__main__":
         df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
         df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
         
-        # Subir lote a Google Sheets
         hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
         print(f"Lote {inicio}-{fin} guardado. Limpiando espacio temporal...")
         
-        # Limpieza de disco local para el siguiente lote
         for f in os.listdir(output_dir):
             if f.endswith(".jpg"):
                 os.remove(os.path.join(output_dir, f))
         time.sleep(2)
 
-    print("¡Catálogo actualizado con éxito en 900x900!")
+    print("¡Catálogo actualizado con éxito con el nuevo nombre de archivo!")
