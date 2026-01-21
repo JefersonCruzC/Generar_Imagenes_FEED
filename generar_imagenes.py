@@ -47,29 +47,30 @@ def conectar_sheets():
     raise Exception("No se pudo conectar a Google Sheets.")
 
 def generar_pieza_grafica(row):
-    file_name = f"{row['id']}_v2.jpg"
+    file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # REINSTALADO: Si el archivo ya existe y el precio es igual, no trabajar de más
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
     try:
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
+        
         canvas = Image.new('RGB', (900, 900), color=(141, 54, 197))
         draw = ImageDraw.Draw(canvas)
         draw.rounded_rectangle([50, 50, 850, 680], radius=65, fill="white")
+        
         draw.rounded_rectangle([560, 0, 900, 115], radius=35, fill=(141, 54, 197))
         if LOGO_GLOBAL_ORIGINAL:
             logo_w, logo_h = LOGO_GLOBAL_ORIGINAL.size
             nuevo_w = 260
             logo_ready = LOGO_GLOBAL_ORIGINAL.resize((nuevo_w, int((nuevo_w/logo_w)*logo_h)), Image.Resampling.LANCZOS)
             canvas.paste(logo_ready, (560 + (340 - nuevo_w)//2, (115 - logo_ready.height)//2), logo_ready)
+        
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # --- Lógica dinámica de textos ---
         brand_txt = str(row.get('brand', '')).upper().strip()
         brand_sz = 38
         f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
@@ -90,7 +91,7 @@ def generar_pieza_grafica(row):
         for line in lines[:3]:
             draw.text((60, y_t), line, font=f_title, fill="white")
             y_t += (t_sz + 6)
-            
+
         p_sale_val = str(row.get('sale_price','0')).replace(' PEN','').strip()
         s_sz, simb_sz = 120, 62
         f_s, f_sm = ImageFont.truetype(FONT_BOLD, s_sz), ImageFont.truetype(FONT_BOLD, simb_sz)
@@ -101,7 +102,7 @@ def generar_pieza_grafica(row):
         w_s, w_sm = draw.textlength(p_sale_val, font=f_s), draw.textlength("S/", font=f_sm)
         draw.text((840 - w_s - w_sm - 8, 765 + (62-simb_sz)//2), "S/", font=f_sm, fill="white")
         draw.text((840 - w_s, 760 + (120-s_sz)//2), p_sale_val, font=f_s, fill="white")
-        
+
         p_reg_txt = f"Precio regular: S/{str(row.get('price','0')).replace(' PEN','')}"
         p_reg_sz = 30
         f_reg = ImageFont.truetype(FONT_REGULAR, p_reg_sz)
@@ -109,7 +110,7 @@ def generar_pieza_grafica(row):
             p_reg_sz -= 2
             f_reg = ImageFont.truetype(FONT_REGULAR, p_reg_sz)
         draw.text((840 - draw.textlength(p_reg_txt, font=f_reg), 725), p_reg_txt, font=f_reg, fill="white")
-        
+
         canvas.save(target_path, "JPEG", quality=90)
         return URL_BASE_PAGES + file_name
     except:
@@ -129,13 +130,12 @@ if __name__ == "__main__":
     df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
     df_full['original_image_url'] = df_full['image_link']
     
-    # ACTIVAR SKIP_GENERATE
     df_full['SKIP_GENERATE'] = df_full.apply(lambda r: str(r['id']) in cache_precios and 
                                    cache_precios[str(r['id'])][0].split('?v=')[0] == str(r['sale_price']) and 
                                    cache_precios[str(r['id'])][1] == str(r['price']), axis=1)
 
     total_filas = len(df_full)
-    tamano_lote = 15000 
+    tamano_lote = 5000 
     
     hoja.clear()
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
@@ -146,14 +146,18 @@ if __name__ == "__main__":
         df_lote = df_full.iloc[inicio:fin].copy()
         rows_to_process = df_lote.to_dict('records')
         
-        print(f"Procesando lote {inicio} a {fin}...")
         with ThreadPoolExecutor(max_workers=40) as executor:
             resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
 
-        df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+        # NUEVO: Generamos el link con Brand y Sale Price para forzar actualización
+        df_lote['image_link'] = [
+            f"{res}?brand={str(row['brand']).replace(' ', '')}&v={str(row['sale_price']).replace(' ', '')}" 
+            if res != "" else "" for res, row in zip(resultados, rows_to_process)
+        ]
+        
         df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
         
-        # SUBIDA CON REINTENTO
+        # Subida con reintentos para evitar errores 502 de Google
         datos_lista = df_subir.values.tolist()
         exito, reintentos = False, 0
         while not exito and reintentos < 3:
@@ -164,7 +168,11 @@ if __name__ == "__main__":
                 reintentos += 1
                 time.sleep(30)
         
-        # ELIMINADA LA LIMPIEZA DE DISCO LOCAL PARA QUE PAGES PUEDA DESPLEGAR
+        # Limpieza de disco local para evitar saturación (No Space Left on Device)
+        for f in os.listdir(output_dir):
+            if f.endswith(".jpg"):
+                os.remove(os.path.join(output_dir, f))
+        
         time.sleep(2)
         
-    print("¡Proceso finalizado! GitHub Pages publicará las imágenes en breve.")
+    print("¡Proceso masivo finalizado con URL enriquecida!")
