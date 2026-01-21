@@ -18,6 +18,7 @@ USUARIO_GITHUB = "JefersonCruzC"
 REPO_NOMBRE = "Generar_Imagenes_FEED" 
 URL_BASE_PAGES = f"https://{USUARIO_GITHUB}.github.io/{REPO_NOMBRE}/images/"
 
+# Archivos locales en el repositorio
 LOGO_PATH = "logojuntozblanco.png" 
 FONT_BOLD = "HurmeGeometricSans1 Bold.otf"
 FONT_OBLIQUE = "HurmeGeometricSans1 Oblique.otf"
@@ -27,6 +28,7 @@ output_dir = "docs/images"
 os.makedirs(output_dir, exist_ok=True)
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
+# Cargar logo globalmente
 try:
     LOGO_GLOBAL_ORIGINAL = Image.open(LOGO_PATH).convert("RGBA")
 except:
@@ -51,7 +53,7 @@ def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # REINSTALADO: Salto inteligente para ahorrar tiempo y espacio
+    # SALTO INTELIGENTE: Si ya existe y el precio no cambió, no trabajar de más
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
@@ -64,25 +66,25 @@ def generar_pieza_grafica(row):
         canvas = Image.new('RGB', (900, 900), color=color_morado)
         draw = ImageDraw.Draw(canvas)
         
-        # 2. CONTENEDOR BLANCO (Proporcional a 900px)
+        # 2. CONTENEDOR BLANCO
         draw.rounded_rectangle([50, 50, 850, 680], radius=65, fill="white")
         
         # 3. PESTAÑA LOGO
         altura_pestana = 115
         draw.rounded_rectangle([560, 0, 900, altura_pestana], radius=35, fill=color_morado)
         
-        # 4. LOGO (Ajustado a escala)
+        # 4. LOGO (Escalado a 900px)
         if LOGO_GLOBAL_ORIGINAL:
             logo_w, logo_h = LOGO_GLOBAL_ORIGINAL.size
             nuevo_logo_w = 260
             logo_ready = LOGO_GLOBAL_ORIGINAL.resize((nuevo_logo_w, int((nuevo_logo_w/logo_w)*logo_h)), Image.Resampling.LANCZOS)
             canvas.paste(logo_ready, (560 + (340 - nuevo_logo_w)//2, (altura_pestana - logo_ready.height)//2), logo_ready)
         
-        # 5. PRODUCTO (Ajustado a escala)
+        # 5. PRODUCTO
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # 6. FUENTES (Reducidas proporcionalmente)
+        # 6. FUENTES ADAPTADAS
         brand_sz, title_sz = 38, 30
         f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
         f_title = ImageFont.truetype(FONT_OBLIQUE, title_sz)
@@ -131,6 +133,7 @@ def generar_pieza_grafica(row):
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
+    
     print("Obteniendo memoria de precios...")
     try:
         data_actual = hoja.get_all_records()
@@ -138,27 +141,46 @@ if __name__ == "__main__":
     except:
         cache_precios = {}
 
-    print("Descargando Feed...")
+    print("Descargando Feed completo...")
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
-    df = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
-    df['original_image_url'] = df['image_link']
+    df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
+    df_full['original_image_url'] = df_full['image_link']
     
-    # REINSTALADO: Verificar cambios para no saturar disco
-    df['SKIP_GENERATE'] = df.apply(lambda r: str(r['id']) in cache_precios and 
+    # Determinar qué productos necesitan regenerarse
+    df_full['SKIP_GENERATE'] = df_full.apply(lambda r: str(r['id']) in cache_precios and 
                                    cache_precios[str(r['id'])][0].split('?v=')[0] == str(r['sale_price']) and 
                                    cache_precios[str(r['id'])][1] == str(r['price']), axis=1)
 
-    rows_to_process = df.to_dict('records')
-    with ThreadPoolExecutor(max_workers=40) as executor:
-        resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df)))
+    total_filas = len(df_full)
+    tamano_lote = 12000 # Procesamos en bloques para cuidar el disco
+    print(f"Iniciando proceso por lotes. Total: {total_filas} productos.")
 
-    df['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
-    columnas = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
-    df_final = df[df['image_link'] != ""][columnas].astype(str)
-    
-    lista_final = [df_final.columns.tolist()] + df_final.values.tolist()
+    # Limpiar hoja al inicio e insertar encabezados
     hoja.clear()
-    for i in range(0, len(lista_final), 5000):
-        hoja.append_rows(lista_final[i:i+5000], value_input_option='RAW')
+    encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
+    hoja.append_rows([encabezados], value_input_option='RAW')
+
+    for inicio in range(0, total_filas, tamano_lote):
+        fin = min(inicio + tamano_lote, total_filas)
+        df_lote = df_full.iloc[inicio:fin].copy()
+        rows_to_process = df_lote.to_dict('records')
+        
+        print(f"--- Procesando Lote {inicio} a {fin} ---")
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
+
+        # Aplicar Cache Busting
+        df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+        df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
+        
+        # Subir lote a Google Sheets
+        hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
+        print(f"Lote {inicio}-{fin} guardado. Limpiando espacio temporal...")
+        
+        # Limpieza de disco local para el siguiente lote
+        for f in os.listdir(output_dir):
+            if f.endswith(".jpg"):
+                os.remove(os.path.join(output_dir, f))
         time.sleep(2)
-    print("¡Proceso completado con diseño adaptado a 900x900!")
+
+    print("¡Catálogo actualizado con éxito en 900x900!")
