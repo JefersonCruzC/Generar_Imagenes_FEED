@@ -78,7 +78,7 @@ def generar_pieza_grafica(row):
         
         titulo = str(row.get('title', 'Producto')).strip()
         f_title = ImageFont.truetype(FONT_OBLIQUE, 28)
-        lines = textwrap.wrap(titulo, width=22) # Ancho estrecho para no tocar el precio
+        lines = textwrap.wrap(titulo, width=22) 
         y_t = 765
         for line in lines[:3]:
             draw.text((60, y_t), line, font=f_title, fill="white")
