@@ -47,7 +47,6 @@ def conectar_sheets():
     raise Exception("No se pudo conectar a Google Sheets.")
 
 def generar_pieza_grafica(row):
-    # Sufijo _jz para forzar actualización visual
     file_name = f"{row['id']}_jz.jpg"
     target_path = os.path.join(output_dir, file_name)
     
@@ -55,13 +54,11 @@ def generar_pieza_grafica(row):
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
         
-        # 1. LIENZO 900x900 MORADO
         color_morado = (141, 54, 197)
         canvas = Image.new('RGB', (900, 900), color=color_morado)
         draw = ImageDraw.Draw(canvas)
         draw.rounded_rectangle([50, 50, 850, 680], radius=65, fill="white")
         
-        # 2. PESTAÑA LOGO
         altura_pestana = 115
         draw.rounded_rectangle([560, 0, 900, altura_pestana], radius=35, fill=color_morado)
         
@@ -71,36 +68,67 @@ def generar_pieza_grafica(row):
             logo_ready = LOGO_GLOBAL_ORIGINAL.resize((nuevo_logo_w, int((nuevo_logo_w/logo_w)*logo_h)), Image.Resampling.LANCZOS)
             canvas.paste(logo_ready, (560 + (340 - nuevo_logo_w)//2, (altura_pestana - logo_ready.height)//2), logo_ready)
         
-        # 3. IMAGEN PRODUCTO
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # 4. FUENTES
-        f_brand = ImageFont.truetype(FONT_BOLD, 38)
-        f_title = ImageFont.truetype(FONT_OBLIQUE, 30)
-        f_reg_txt = ImageFont.truetype(FONT_REGULAR, 30)
-        f_sale_val = ImageFont.truetype(FONT_BOLD, 120)
-        f_simbolo = ImageFont.truetype(FONT_BOLD, 62)
-
-        # 5. TEXTOS
+        # --- CONFIGURACIÓN DE TEXTOS DINÁMICOS ---
+        
+        # 1. MARCA (BRAND) - Límite de ancho 450px
         brand_txt = str(row.get('brand', '')).upper().strip()
+        brand_size = 38
+        f_brand = ImageFont.truetype(FONT_BOLD, brand_size)
+        while draw.textlength(brand_txt, font=f_brand) > 450 and brand_size > 24:
+            brand_size -= 2
+            f_brand = ImageFont.truetype(FONT_BOLD, brand_size)
         draw.text((60, 720), brand_txt, font=f_brand, fill="white")
         
+        # 2. TÍTULO ADAPTATIVO
         titulo = str(row.get('title', 'Producto')).strip()
+        title_size = 30
+        f_title = ImageFont.truetype(FONT_OBLIQUE, title_size)
         lines = textwrap.wrap(titulo, width=28)
+        while (len(lines) > 3 or any(draw.textlength(l, font=f_title) > 500 for l in lines)) and title_size > 22:
+            title_size -= 2
+            f_title = ImageFont.truetype(FONT_OBLIQUE, title_size)
+            lines = textwrap.wrap(titulo, width=32)
+        
         y_txt = 770
         for line in lines[:3]:
             draw.text((60, y_txt), line, font=f_title, fill="white")
-            y_txt += 36
+            y_txt += (title_size + 6)
 
-        # 6. PRECIOS
-        p_reg = f"Precio regular: S/{str(row.get('price','0')).replace(' PEN','')}"
-        draw.text((840 - draw.textlength(p_reg, font=f_reg_txt), 725), p_reg, font=f_reg_txt, fill="white")
+        # 3. PRECIO REGULAR
+        p_reg_txt = f"Precio regular: S/{str(row.get('price','0')).replace(' PEN','')}"
+        p_reg_size = 30
+        f_reg = ImageFont.truetype(FONT_REGULAR, p_reg_size)
+        while draw.textlength(p_reg_txt, font=f_reg) > 350 and p_reg_size > 20:
+            p_reg_size -= 2
+            f_reg = ImageFont.truetype(FONT_REGULAR, p_reg_size)
+        draw.text((840 - draw.textlength(p_reg_txt, font=f_reg), 725), p_reg_txt, font=f_reg, fill="white")
         
-        p_sale = str(row.get('sale_price','0')).replace(' PEN','').strip()
-        w_sale = draw.textlength(p_sale, font=f_sale_val)
-        draw.text((840 - w_sale - draw.textlength("S/", font=f_simbolo) - 5, 765), "S/", font=f_simbolo, fill="white")
-        draw.text((840 - w_sale, 760), p_sale, font=f_sale_val, fill="white")
+        # 4. PRECIO DE VENTA (EL GRANDE)
+        p_sale_val = str(row.get('sale_price','0')).replace(' PEN','').strip()
+        sale_size = 120
+        simbolo_size = 62
+        f_sale = ImageFont.truetype(FONT_BOLD, sale_size)
+        f_simb = ImageFont.truetype(FONT_BOLD, simbolo_size)
+        
+        # Reducir si el precio es muy largo (ej. S/ 10,000.00)
+        while draw.textlength(p_sale_val, font=f_sale) > 350 and sale_size > 80:
+            sale_size -= 5
+            simbolo_size -= 3
+            f_sale = ImageFont.truetype(FONT_BOLD, sale_size)
+            f_simb = ImageFont.truetype(FONT_BOLD, simbolo_size)
+            
+        w_sale = draw.textlength(p_sale_val, font=f_sale)
+        w_simb = draw.textlength("S/", font=f_simb)
+        
+        # Ajustamos posición Y dinámicamente según el tamaño de la fuente
+        y_sale = 760 + (120 - sale_size) // 2 
+        y_simb = 765 + (62 - simbolo_size) // 2
+        
+        draw.text((840 - w_sale - w_simb - 8, y_simb), "S/", font=f_simb, fill="white")
+        draw.text((840 - w_sale, y_sale), p_sale_val, font=f_sale, fill="white")
 
         canvas.save(target_path, "JPEG", quality=90)
         return URL_BASE_PAGES + file_name
@@ -111,7 +139,7 @@ if __name__ == "__main__":
     hoja = conectar_sheets()
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     
-    # --- FILTRO DE PRUEBA: SOLO 100 PRODUCTOS ---
+    # PRUEBA: 100 productos con lógica dinámica
     df_test = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].head(100).copy()
     df_test['original_image_url'] = df_test['image_link']
     
@@ -119,7 +147,7 @@ if __name__ == "__main__":
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
     hoja.append_rows([encabezados], value_input_option='RAW')
 
-    print(f"Iniciando prueba con {len(df_test)} productos...")
+    print(f"Generando prueba dinámica para {len(df_test)} productos...")
     rows_to_process = df_test.to_dict('records')
     
     with ThreadPoolExecutor(max_workers=20) as executor:
@@ -129,5 +157,4 @@ if __name__ == "__main__":
     df_subir = df_test[df_test['image_link'] != ""][encabezados].astype(str)
     
     hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
-    
-    print("¡Prueba de 100 productos completada! GitHub Pages iniciará el despliegue.")
+    print("¡Prueba dinámica completada!")
