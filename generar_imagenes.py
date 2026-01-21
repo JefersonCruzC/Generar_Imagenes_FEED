@@ -47,10 +47,11 @@ def conectar_sheets():
     raise Exception("No se pudo conectar a Google Sheets.")
 
 def generar_pieza_grafica(row):
-    file_name = f"{row['id']}.jpg"
+    # CAMBIO A V2: Esto genera un nombre de archivo nuevo para forzar a FB/TikTok
+    file_name = f"{row['id']}_v2.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # --- SALTO INTELIGENTE ---
+    # El salto inteligente funcionará solo si el archivo _v2 ya existe
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
@@ -130,6 +131,7 @@ if __name__ == "__main__":
     print("Obteniendo memoria de precios...")
     try:
         data_actual = hoja.get_all_records()
+        # Ajustamos para que reconozca los links v2 en el caché
         cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
     except:
         cache_precios = {}
@@ -158,10 +160,11 @@ if __name__ == "__main__":
         with ThreadPoolExecutor(max_workers=40) as executor:
             resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
 
+        # Link final con cache-busting de precio
         df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
         df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
         
         hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
         time.sleep(2)
         
-    print("¡Proceso masivo completado!")
+    print("¡Proceso masivo completado con versión v2!")
