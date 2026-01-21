@@ -41,7 +41,7 @@ def conectar_sheets():
             creds = ServiceAccountCredentials.from_json_keyfile_dict(info_creds, scope)
             client = gspread.authorize(creds)
             return client.open_by_key(SHEET_ID).sheet1
-        except Exception as e:
+        except Exception:
             intentos += 1
             time.sleep(15)
     raise Exception("No se pudo conectar a Google Sheets.")
@@ -50,7 +50,6 @@ def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
     
-    # SALTO INTELIGENTE: Si el archivo existe físicamente y el precio no cambió, saltamos
     if row.get('SKIP_GENERATE') and os.path.exists(target_path):
         return URL_BASE_PAGES + file_name
 
@@ -72,46 +71,29 @@ def generar_pieza_grafica(row):
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
-        # --- LÓGICA DE TEXTOS ADAPTATIVOS ---
+        # --- DISEÑO DINÁMICO MEJORADO ---
         brand_txt = str(row.get('brand', '')).upper().strip()
-        brand_sz = 38
-        f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
-        while draw.textlength(brand_txt, font=f_brand) > 450 and brand_sz > 22:
-            brand_sz -= 2
-            f_brand = ImageFont.truetype(FONT_BOLD, brand_sz)
-        draw.text((60, 720), brand_txt, font=f_brand, fill="white")
+        f_brand = ImageFont.truetype(FONT_BOLD, 38)
+        draw.text((60, 715), brand_txt, font=f_brand, fill="white")
         
         titulo = str(row.get('title', 'Producto')).strip()
-        t_sz = 30
-        f_title = ImageFont.truetype(FONT_OBLIQUE, t_sz)
-        lines = textwrap.wrap(titulo, width=28)
-        while (len(lines) > 3 or any(draw.textlength(l, font=f_title) > 480 for l in lines)) and t_sz > 20:
-            t_sz -= 2
-            f_title = ImageFont.truetype(FONT_OBLIQUE, t_sz)
-            lines = textwrap.wrap(titulo, width=32)
-        y_t = 770
+        f_title = ImageFont.truetype(FONT_OBLIQUE, 28)
+        lines = textwrap.wrap(titulo, width=22) # Ancho estrecho para no tocar el precio
+        y_t = 765
         for line in lines[:3]:
             draw.text((60, y_t), line, font=f_title, fill="white")
-            y_t += (t_sz + 6)
+            y_t += 34
 
         p_sale_val = str(row.get('sale_price','0')).replace(' PEN','').strip()
-        s_sz, simb_sz = 120, 62
-        f_s, f_sm = ImageFont.truetype(FONT_BOLD, s_sz), ImageFont.truetype(FONT_BOLD, simb_sz)
-        while draw.textlength(p_sale_val, font=f_s) > 340 and s_sz > 85:
-            s_sz -= 5
-            simb_sz -= 3
-            f_s, f_sm = ImageFont.truetype(FONT_BOLD, s_sz), ImageFont.truetype(FONT_BOLD, simb_sz)
-        w_s, w_sm = draw.textlength(p_sale_val, font=f_s), draw.textlength("S/", font=f_sm)
-        draw.text((840 - w_s - w_sm - 8, 765 + (62-simb_sz)//2), "S/", font=f_sm, fill="white")
-        draw.text((840 - w_s, 760 + (120-s_sz)//2), p_sale_val, font=f_s, fill="white")
+        f_s = ImageFont.truetype(FONT_BOLD, 110)
+        f_sm = ImageFont.truetype(FONT_BOLD, 55)
+        w_s = draw.textlength(p_sale_val, font=f_s)
+        draw.text((840 - w_s - 65, 765), "S/", font=f_sm, fill="white")
+        draw.text((840 - w_s, 760), p_sale_val, font=f_s, fill="white")
 
         p_reg_txt = f"Precio regular: S/{str(row.get('price','0')).replace(' PEN','')}"
-        p_reg_sz = 30
-        f_reg = ImageFont.truetype(FONT_REGULAR, p_reg_sz)
-        while draw.textlength(p_reg_txt, font=f_reg) > 350 and p_reg_sz > 20:
-            p_reg_sz -= 2
-            f_reg = ImageFont.truetype(FONT_REGULAR, p_reg_sz)
-        draw.text((840 - draw.textlength(p_reg_txt, font=f_reg), 725), p_reg_txt, font=f_reg, fill="white")
+        f_reg = ImageFont.truetype(FONT_REGULAR, 28)
+        draw.text((840 - draw.textlength(p_reg_txt, font=f_reg), 720), p_reg_txt, font=f_reg, fill="white")
 
         canvas.save(target_path, "JPEG", quality=90)
         return URL_BASE_PAGES + file_name
@@ -121,10 +103,10 @@ def generar_pieza_grafica(row):
 if __name__ == "__main__":
     hoja = conectar_sheets()
     
-    print("Obteniendo memoria de precios para Salto Inteligente...")
+    print("Obteniendo memoria de precios...")
     try:
         data_actual = hoja.get_all_records()
-        cache_precios = {str(r['id']): (str(r['sale_price']), str(r['price'])) for r in data_actual}
+        cache_precios = {str(r['id']): str(r['sale_price']).split('?v=')[0] for r in data_actual}
     except:
         cache_precios = {}
 
@@ -132,46 +114,40 @@ if __name__ == "__main__":
     df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
     df_full['original_image_url'] = df_full['image_link']
     
-    # Lógica de Salto: Comprobamos existencia física del archivo
     df_full['SKIP_GENERATE'] = df_full.apply(lambda r: 
         os.path.exists(os.path.join(output_dir, f"{r['id']}.jpg")) and 
-        str(r['id']) in cache_precios and
-        cache_precios[str(r['id'])][0].split('?brand=')[0].split('?v=')[0] == str(r['sale_price']), axis=1)
+        cache_precios.get(str(r['id'])) == str(r['sale_price']), axis=1)
 
-    # PROCESAMOS LOTE DE 10,000 QUE NO EXISTAN O HAYAN CAMBIADO
-    df_pendientes = df_full[df_full['SKIP_GENERATE'] == False].head(10000).copy()
+    total_filas = len(df_full)
+    tamano_lote = 10000 
     
-    if not df_pendientes.empty:
-        # Si la hoja está vacía (primera corrida), escribimos encabezados
-        if not cache_precios:
-            hoja.clear()
-            encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
-            hoja.append_rows([encabezados], value_input_option='RAW')
-        
-        rows_to_process = df_pendientes.to_dict('records')
-        print(f"Procesando lote de {len(rows_to_process)} imágenes...")
-        
-        with ThreadPoolExecutor(max_workers=35) as executor:
-            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_pendientes)))
+    hoja.clear()
+    encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
+    hoja.append_rows([encabezados], value_input_option='RAW')
 
-        # URL Enriquecida para Cache Busting en Redes Sociales
-        df_pendientes['image_link'] = [
-            f"{res}?brand={str(row['brand']).replace(' ', '')}&v={str(row['sale_price']).replace(' ', '')}" 
-            if res != "" else "" for res, row in zip(resultados, rows_to_process)
-        ]
+    for inicio in range(0, total_filas, tamano_lote):
+        fin = min(inicio + tamano_lote, total_filas)
+        df_lote = df_full.iloc[inicio:fin].copy()
         
-        df_subir = df_pendientes[df_pendientes['image_link'] != ""][['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']].astype(str)
+        rows_to_process = df_lote.to_dict('records')
+        print(f"Procesando bloque {inicio} a {fin}...")
         
-        # Subida con reintentos para evitar errores 502
+        with ThreadPoolExecutor(max_workers=40) as executor:
+            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
+
+        df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+        df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
+        
         datos_lista = df_subir.values.tolist()
         exito, reintentos = False, 0
         while not exito and reintentos < 3:
             try:
                 hoja.append_rows(datos_lista, value_input_option='RAW')
                 exito = True
+                print(f"Lote {inicio}-{fin} subido. Esperando 30s...")
+                time.sleep(30)
             except:
                 reintentos += 1
-                print(f"Error en Sheets. Reintento {reintentos}/3...")
-                time.sleep(30)
+                time.sleep(60)
         
-    print("¡Lote de 10k completado físicamente!")
+    print("¡Proceso de 100k completado!")

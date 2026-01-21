@@ -44,5 +44,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add docs/images/*.jpg
-          git commit -m "Update: Lote de imagenes procesado" || echo "Sin cambios"
+          git commit -m "Update: Proceso masivo de 100k" || echo "Sin cambios"
           git push origin main
