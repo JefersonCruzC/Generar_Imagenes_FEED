@@ -15,7 +15,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
@@ -38,15 +38,26 @@ jobs:
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
-      - name: Guardar imágenes en el repositorio (Modo Seguro con Force)
+      - name: Guardar imágenes en el repositorio (Sincronización Total)
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # AJUSTES PARA EVITAR TIMEOUTS EN CARGAS GRANDES
+          
+          # 1. OPTIMIZACIÓN DE MEMORIA Y RED
+          # Aumentamos el buffer para subir miles de archivos sin cortes
           git config --global http.postBuffer 1048576000
+          git config --global core.compression 0
           git config --global http.lowSpeedLimit 0
           git config --global http.lowSpeedTime 999999
+          
+          # 2. LIMPIEZA DE ÍNDICE
+          # Esto repara el repositorio antes de subir para evitar archivos truncados
+          git gc --prune=now --aggressive
+          
+          # 3. ADICIÓN FORZADA
           git add docs/images/*.jpg
-          git commit -m "Update: Lote incremental" || echo "Sin cambios"
-          # EL COMANDO CLAVE: Forzamos la subida para refrescar GitHub Pages
+          
+          # 4. COMMIT Y PUSH CON FORCE
+          # El --force obliga a GitHub Pages a reconstruir el sitio desde cero
+          git commit -m "Rescate: Sincronización completa de catálogo" || echo "Sin cambios"
           git push origin main --force
