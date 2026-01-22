@@ -42,9 +42,6 @@ def conectar_sheets():
 def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
-    # SALTO: Si ya existe físicamente, no gastamos tiempo/recursos
-    if os.path.exists(target_path):
-        return URL_BASE_PAGES + file_name
     try:
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
@@ -59,25 +56,29 @@ def generar_pieza_grafica(row):
             canvas.paste(logo_ready, (560 + (340 - nuevo_w)//2, (115 - logo_ready.height)//2), logo_ready)
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
+        
         brand_txt = str(row.get('brand', '')).upper().strip()
         f_brand = ImageFont.truetype(FONT_BOLD, 38)
         draw.text((60, 715), brand_txt, font=f_brand, fill="white")
+        
         titulo = str(row.get('title', 'Producto')).strip()
         f_title = ImageFont.truetype(FONT_OBLIQUE, 28)
-        lines = textwrap.wrap(titulo, width=22)
+        lines = textwrap.wrap(titulo, width=22) 
         y_t = 765
         for line in lines[:3]:
             draw.text((60, y_t), line, font=f_title, fill="white")
             y_t += 34
+
         p_sale_val = str(row.get('sale_price','0')).replace(' PEN','').strip()
-        f_s = ImageFont.truetype(FONT_BOLD, 110)
-        f_sm = ImageFont.truetype(FONT_BOLD, 55)
+        f_s, f_sm = ImageFont.truetype(FONT_BOLD, 110), ImageFont.truetype(FONT_BOLD, 55)
         w_s = draw.textlength(p_sale_val, font=f_s)
         draw.text((840 - w_s - 65, 765), "S/", font=f_sm, fill="white")
         draw.text((840 - w_s, 760), p_sale_val, font=f_s, fill="white")
+
         p_reg_txt = f"Precio regular: S/{str(row.get('price','0')).replace(' PEN','')}"
         f_reg = ImageFont.truetype(FONT_REGULAR, 28)
         draw.text((840 - draw.textlength(p_reg_txt, font=f_reg), 720), p_reg_txt, font=f_reg, fill="white")
+
         canvas.save(target_path, "JPEG", quality=90)
         return URL_BASE_PAGES + file_name
     except:
@@ -85,36 +86,31 @@ def generar_pieza_grafica(row):
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
+    
+    # 1. Leemos feed y estado físico actual
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
     df_full['original_image_url'] = df_full['image_link']
     
-    # 1. LIMPIEZA TOTAL DE DUPLICADOS EN CADA INICIO PARA ASEGURAR 100K EXACTOS
-    # Esto corregirá las 124k filas actuales y dejará solo los encabezados
-    print("Limpiando hoja para evitar duplicados y asegurar catálogo exacto...")
-    hoja.clear()
-    encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
-    hoja.append_rows([encabezados], value_input_option='RAW')
-
-    # 2. PROCESAMIENTO COMPLETO (Ya no por bloques de 25k, sino el feed entero)
-    # Pero para no saturar la subida, lo dividimos en bloques internos de 10k
-    total_filas = len(df_full)
-    tamano_bloque = 10000
-
-    for i in range(0, total_filas, tamano_bloque):
-        lote = df_full.iloc[i : i + tamano_bloque].copy()
-        rows = lote.to_dict('records')
-        print(f"Procesando bloque {i} de {total_filas}...")
-        
+    # SALTO REAL: Solo procesamos si el archivo NO existe físicamente en el repositorio
+    print("Verificando archivos existentes en disco...")
+    df_full['EXISTE_FISICO'] = df_full['id'].apply(lambda x: os.path.exists(os.path.join(output_dir, f"{x}.jpg")))
+    
+    # SELECCIONAMOS LOTE DE SEGURIDAD (15,000) para evitar Error 500 de Git
+    df_pendientes = df_full[df_full['EXISTE_FISICO'] == False].head(15000).copy()
+    
+    if not df_pendientes.empty:
+        rows_to_process = df_pendientes.to_dict('records')
+        print(f"Generando lote de {len(rows_to_process)} imágenes...")
         with ThreadPoolExecutor(max_workers=40) as executor:
-            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows), total=len(lote)))
+            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_pendientes)))
 
-        lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows)]
-        df_subir = lote[lote['image_link'] != ""][encabezados].astype(str)
+        # Actualizamos links solo para el lote procesado
+        df_pendientes['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+        df_subir = df_pendientes[df_pendientes['image_link'] != ""][['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']].astype(str)
         
-        # Subida segura
+        # Subida incremental al Sheets (sin borrar lo anterior)
         hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
-        print("Bloque guardado. Esperando 10s para el siguiente...")
-        time.sleep(10)
-        
-    print("¡Proceso finalizado con 100k únicos!")
+        print(f"Lote guardado. Total en este ciclo: {len(df_subir)}")
+    else:
+        print("No hay imágenes pendientes por generar.")
