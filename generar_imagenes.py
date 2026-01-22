@@ -75,7 +75,6 @@ def generar_pieza_grafica(row):
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
-    
     print("Escaneando archivos físicos...")
     archivos_reales = set([f.replace('.jpg', '') for f in os.listdir(output_dir) if f.endswith('.jpg')])
     
@@ -85,7 +84,7 @@ if __name__ == "__main__":
     df_full['original_image_url'] = df_full['image_link']
     df_full['TIENE_IMAGEN'] = df_full['id'].isin(archivos_reales)
 
-    print("Sincronizando Sheets...")
+    print("Limpiando y sincronizando Sheets...")
     hoja.clear()
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
     hoja.append_rows([encabezados], value_input_option='RAW')
@@ -96,7 +95,6 @@ if __name__ == "__main__":
     for i in range(0, len(df_existentes), 10000):
         bloque = df_existentes.iloc[i:i+10000][encabezados].astype(str).values.tolist()
         hoja.append_rows(bloque, value_input_option='RAW')
-        print(f"Lote {i//10000 + 1} de existentes cargado.")
 
     df_faltantes = df_full[df_full['TIENE_IMAGEN'] == False].head(10000).copy()
     if not df_faltantes.empty:
@@ -104,10 +102,10 @@ if __name__ == "__main__":
         with ThreadPoolExecutor(max_workers=40) as executor:
             res = list(tqdm(executor.map(generar_pieza_grafica, df_faltantes.to_dict('records')), total=len(df_faltantes)))
         
-        # FILTRO DE SEGURIDAD: Solo sube si la URL es válida
+        # FILTRO DE SEGURIDAD: Solo sube si la URL contiene https (evita links rotos)
         df_faltantes['image_link'] = [f"{u}?v={str(r['sale_price']).replace(' ','')}" if (u and "https" in u) else "" for u, r in zip(res, df_faltantes.to_dict('records'))]
         df_subir = df_faltantes[df_faltantes['image_link'] != ""][encabezados].astype(str)
         if not df_subir.empty:
             hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
 
-    print("Proceso terminado.")
+    print("Proceso terminado exitosamente.")
