@@ -38,14 +38,15 @@ jobs:
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
-      - name: Guardar imágenes en el repositorio (Modo Seguro)
+      - name: Guardar imágenes en el repositorio (Modo Seguro con Force)
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # AJUSTES ANTIFALLO DE RED
+          # AJUSTES PARA EVITAR TIMEOUTS EN CARGAS GRANDES
           git config --global http.postBuffer 1048576000
           git config --global http.lowSpeedLimit 0
           git config --global http.lowSpeedTime 999999
           git add docs/images/*.jpg
           git commit -m "Update: Lote incremental" || echo "Sin cambios"
-          git push origin main
+          # EL COMANDO CLAVE: Forzamos la subida para refrescar GitHub Pages
+          git push origin main --force
