@@ -3,13 +3,8 @@ name: Automatizar Imagenes a Google Sheets
 on:
   schedule:
     - cron: '07 05 * * *'
-    - cron: '07 08 * * *'
-    - cron: '07 11 * * *'
     - cron: '07 14 * * *'
-    - cron: '07 17 * * *'
     - cron: '07 20 * * *'
-    - cron: '07 01 * * *'
-    - cron: '07 04 * * *'
   workflow_dispatch:
 
 jobs:
@@ -31,7 +26,6 @@ jobs:
 
       - name: Instalar dependencias
         run: |
-          python -m pip install --upgrade pip
           pip install pandas requests Pillow gspread oauth2client tqdm
 
       - name: Ejecutar procesamiento de imágenes
@@ -39,10 +33,11 @@ jobs:
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
-      - name: Guardar imágenes en el repositorio
+      - name: Guardar imágenes en el repositorio (Turbo)
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          git config --global http.postBuffer 1048576000 # Buffer de 1GB
           git add docs/images/*.jpg
-          git commit -m "Update: Proceso masivo de 100k" || echo "Sin cambios"
+          git commit -m "Update: Lote incremental 25k" || echo "Sin cambios"
           git push origin main

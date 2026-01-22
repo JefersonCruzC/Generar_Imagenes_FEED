@@ -33,41 +33,27 @@ except:
     LOGO_GLOBAL_ORIGINAL = None
 
 def conectar_sheets():
-    intentos = 0
-    while intentos < 3:
-        try:
-            info_creds = json.loads(os.environ['GOOGLE_SHEETS_JSON'])
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(info_creds, scope)
-            client = gspread.authorize(creds)
-            return client.open_by_key(SHEET_ID).sheet1
-        except Exception:
-            intentos += 1
-            time.sleep(15)
-    raise Exception("No se pudo conectar a Google Sheets.")
+    info_creds = json.loads(os.environ['GOOGLE_SHEETS_JSON'])
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(info_creds, scope)
+    client = gspread.authorize(creds)
+    return client.open_by_key(SHEET_ID).sheet1
 
 def generar_pieza_grafica(row):
     file_name = f"{row['id']}.jpg"
     target_path = os.path.join(output_dir, file_name)
-    
-    if row.get('SKIP_GENERATE') and os.path.exists(target_path):
-        return URL_BASE_PAGES + file_name
-
     try:
         res_prod = requests.get(row['original_image_url'], headers=headers, timeout=10)
         prod_img = Image.open(BytesIO(res_prod.content)).convert("RGBA")
-        
         canvas = Image.new('RGB', (900, 900), color=(141, 54, 197))
         draw = ImageDraw.Draw(canvas)
         draw.rounded_rectangle([50, 50, 850, 680], radius=65, fill="white")
-        
         draw.rounded_rectangle([560, 0, 900, 115], radius=35, fill=(141, 54, 197))
         if LOGO_GLOBAL_ORIGINAL:
             logo_w, logo_h = LOGO_GLOBAL_ORIGINAL.size
             nuevo_w = 260
             logo_ready = LOGO_GLOBAL_ORIGINAL.resize((nuevo_w, int((nuevo_w/logo_w)*logo_h)), Image.Resampling.LANCZOS)
             canvas.paste(logo_ready, (560 + (340 - nuevo_w)//2, (115 - logo_ready.height)//2), logo_ready)
-        
         prod_img.thumbnail((600, 450), Image.Resampling.LANCZOS)
         canvas.paste(prod_img, ((900 - prod_img.width)//2, 130 + (450 - prod_img.height)//2), prod_img)
         
@@ -78,7 +64,7 @@ def generar_pieza_grafica(row):
         
         titulo = str(row.get('title', 'Producto')).strip()
         f_title = ImageFont.truetype(FONT_OBLIQUE, 28)
-        lines = textwrap.wrap(titulo, width=22) 
+        lines = textwrap.wrap(titulo, width=22) # Evita choque con el precio
         y_t = 765
         for line in lines[:3]:
             draw.text((60, y_t), line, font=f_title, fill="white")
@@ -102,52 +88,23 @@ def generar_pieza_grafica(row):
 
 if __name__ == "__main__":
     hoja = conectar_sheets()
-    
-    print("Obteniendo memoria de precios...")
-    try:
-        data_actual = hoja.get_all_records()
-        cache_precios = {str(r['id']): str(r['sale_price']).split('?v=')[0] for r in data_actual}
-    except:
-        cache_precios = {}
-
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
     df_full['original_image_url'] = df_full['image_link']
     
-    df_full['SKIP_GENERATE'] = df_full.apply(lambda r: 
-        os.path.exists(os.path.join(output_dir, f"{r['id']}.jpg")) and 
-        cache_precios.get(str(r['id'])) == str(r['sale_price']), axis=1)
-
-    total_filas = len(df_full)
-    tamano_lote = 10000 
+    # SALTO: Solo procesamos si NO existe físicamente en docs/images
+    df_full['EXISTE'] = df_full['id'].apply(lambda x: os.path.exists(os.path.join(output_dir, f"{x}.jpg")))
+    df_pendientes = df_full[df_full['EXISTE'] == False].head(25000).copy() # LOTE TURBO
     
-    hoja.clear()
-    encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
-    hoja.append_rows([encabezados], value_input_option='RAW')
+    if not df_pendientes.empty:
+        rows_to_process = df_pendientes.to_dict('records')
+        print(f"Generando bloque de {len(rows_to_process)} imágenes...")
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_pendientes)))
 
-    for inicio in range(0, total_filas, tamano_lote):
-        fin = min(inicio + tamano_lote, total_filas)
-        df_lote = df_full.iloc[inicio:fin].copy()
+        df_pendientes['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
+        df_subir = df_pendientes[df_pendientes['image_link'] != ""][['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']].astype(str)
         
-        rows_to_process = df_lote.to_dict('records')
-        print(f"Procesando bloque {inicio} a {fin}...")
+        hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
         
-        with ThreadPoolExecutor(max_workers=40) as executor:
-            resultados = list(tqdm(executor.map(generar_pieza_grafica, rows_to_process), total=len(df_lote)))
-
-        df_lote['image_link'] = [f"{res}?v={str(row['sale_price']).replace(' ', '')}" if res != "" else "" for res, row in zip(resultados, rows_to_process)]
-        df_subir = df_lote[df_lote['image_link'] != ""][encabezados].astype(str)
-        
-        datos_lista = df_subir.values.tolist()
-        exito, reintentos = False, 0
-        while not exito and reintentos < 3:
-            try:
-                hoja.append_rows(datos_lista, value_input_option='RAW')
-                exito = True
-                print(f"Lote {inicio}-{fin} subido. Esperando 30s...")
-                time.sleep(30)
-            except:
-                reintentos += 1
-                time.sleep(60)
-        
-    print("¡Proceso de 100k completado!")
+    print("Lote incremental finalizado.")
