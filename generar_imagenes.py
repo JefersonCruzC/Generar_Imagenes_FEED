@@ -76,22 +76,16 @@ def generar_pieza_grafica(row):
 if __name__ == "__main__":
     hoja = conectar_sheets()
     
-    # 1. Escaneamos qué hay REALMENTE en el repositorio
-    print("Escaneando archivos físicos en docs/images...")
+    print("Escaneando archivos físicos...")
     archivos_reales = set([f.replace('.jpg', '') for f in os.listdir(output_dir) if f.endswith('.jpg')])
     
-    # 2. Leemos el feed
     df_raw = pd.read_csv(URL_FEED, sep='\t', low_memory=False).fillna("")
     df_full = df_raw[(df_raw['availability'].str.lower() == 'in stock') & (df_raw['image_link'].notnull())].copy()
     df_full['id'] = df_full['id'].astype(str)
     df_full['original_image_url'] = df_full['image_link']
-
-    # 3. Identificamos qué productos del feed ya tienen imagen física
     df_full['TIENE_IMAGEN'] = df_full['id'].isin(archivos_reales)
 
-    # 4. LIMPIEZA Y RECONSTRUCCIÓN DEL SHEETS
-    # Vamos a reescribir el Sheets con TODO lo que ya existe físicamente
-    print("Reconstruyendo Sheets con imágenes existentes...")
+    print("Sincronizando Sheets...")
     hoja.clear()
     encabezados = ['id', 'title', 'link', 'price', 'sale_price', 'availability', 'description', 'image_link', 'condition', 'brand', 'google_product_category', 'product_type']
     hoja.append_rows([encabezados], value_input_option='RAW')
@@ -99,20 +93,21 @@ if __name__ == "__main__":
     df_existentes = df_full[df_full['TIENE_IMAGEN'] == True].copy()
     df_existentes['image_link'] = df_existentes.apply(lambda r: f"{URL_BASE_PAGES}{r['id']}.jpg?v={str(r['sale_price']).replace(' ','')}", axis=1)
     
-    # Subimos por bloques de 10k para no saturar
     for i in range(0, len(df_existentes), 10000):
         bloque = df_existentes.iloc[i:i+10000][encabezados].astype(str).values.tolist()
         hoja.append_rows(bloque, value_input_option='RAW')
-        print(f"Sincronizados {i+len(bloque)} existentes...")
+        print(f"Lote {i//10000 + 1} de existentes cargado.")
 
-    # 5. GENERAMOS LO QUE FALTA (Lote de 10k)
     df_faltantes = df_full[df_full['TIENE_IMAGEN'] == False].head(10000).copy()
     if not df_faltantes.empty:
-        print(f"Generando {len(df_faltantes)} imágenes nuevas que faltaban...")
+        print(f"Generando {len(df_faltantes)} nuevas...")
         with ThreadPoolExecutor(max_workers=40) as executor:
             res = list(tqdm(executor.map(generar_pieza_grafica, df_faltantes.to_dict('records')), total=len(df_faltantes)))
         
-        df_faltantes['image_link'] = [f"{u}?v={str(r['sale_price']).replace(' ','')}" for u, r in zip(res, df_faltantes.to_dict('records'))]
-        hoja.append_rows(df_faltantes[df_faltantes['image_link'] != ""][encabezados].astype(str).values.tolist())
+        # FILTRO DE SEGURIDAD: Solo sube si la URL es válida
+        df_faltantes['image_link'] = [f"{u}?v={str(r['sale_price']).replace(' ','')}" if (u and "https" in u) else "" for u, r in zip(res, df_faltantes.to_dict('records'))]
+        df_subir = df_faltantes[df_faltantes['image_link'] != ""][encabezados].astype(str)
+        if not df_subir.empty:
+            hoja.append_rows(df_subir.values.tolist(), value_input_option='RAW')
 
-    print("Sincronización finalizada.")
+    print("Proceso terminado.")

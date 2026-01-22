@@ -38,26 +38,20 @@ jobs:
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
 
-      - name: Guardar imágenes en el repositorio (Sincronización Total)
+      - name: Guardar y Forzar Publicación (Anti-404)
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # 1. OPTIMIZACIÓN DE MEMORIA Y RED
-          # Aumentamos el buffer para subir miles de archivos sin cortes
+          # SOLUCIÓN CRÍTICA: El archivo .nojekyll DEBE estar en /docs
+          mkdir -p docs
+          touch docs/.nojekyll
+          
           git config --global http.postBuffer 1048576000
           git config --global core.compression 0
-          git config --global http.lowSpeedLimit 0
-          git config --global http.lowSpeedTime 999999
           
-          # 2. LIMPIEZA DE ÍNDICE
-          # Esto repara el repositorio antes de subir para evitar archivos truncados
-          git gc --prune=now --aggressive
-          
-          # 3. ADICIÓN FORZADA
           git add docs/images/*.jpg
+          git add docs/.nojekyll
           
-          # 4. COMMIT Y PUSH CON FORCE
-          # El --force obliga a GitHub Pages a reconstruir el sitio desde cero
-          git commit -m "Rescate: Sincronización completa de catálogo" || echo "Sin cambios"
+          git commit -m "Fix: Sincronización con .nojekyll en /docs" || echo "Sin cambios"
           git push origin main --force
