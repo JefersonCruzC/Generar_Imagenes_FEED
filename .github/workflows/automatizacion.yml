@@ -2,15 +2,15 @@ name: Automatizar Imagenes a Google Sheets
 
 on:
   schedule:
-    - cron: '0 0 * * *'
-    - cron: '0 3 * * *'
-    - cron: '0 6 * * *'
-    - cron: '0 9 * * *'
-    - cron: '0 12 * * *'
-    - cron: '0 15 * * *'
-    - cron: '0 18 * * *'
-    - cron: '0 21 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'   # 12 AM
+    - cron: '0 3 * * *'   # 03 AM
+    - cron: '0 6 * * *'   # 06 AM
+    - cron: '0 9 * * *'   # 09 AM
+    - cron: '0 12 * * *'  # 12 PM
+    - cron: '0 15 * * *'  # 03 PM
+    - cron: '0 18 * * *'  # 06 PM
+    - cron: '0 21 * * *'  # 09 PM
+  workflow_dispatch:      # Permite ejecución manual para pruebas
 
 jobs:
   build:
@@ -33,7 +33,7 @@ jobs:
         run: |
           pip install pandas requests Pillow gspread oauth2client tqdm
 
-      - name: Ejecutar procesamiento incremental
+      - name: Ejecutar Procesamiento
         env:
           GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}
         run: python generar_imagenes.py
@@ -43,15 +43,16 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Aseguramos que el bypass de Jekyll esté en la carpeta pública
+          # Creación del bypass de Jekyll para eliminar errores 404
           mkdir -p docs
           touch docs/.nojekyll
           
           git config --global http.postBuffer 1048576000
-          git config --global core.compression 0
-          
           git add docs/images/*.jpg
           git add docs/.nojekyll
           
-          git commit -m "Fix: Sincronización completa con bypass de Jekyll" || echo "Sin cambios"
+          # Mantenimiento preventivo de disco: elimina basura del historial de Git
+          git gc --prune=now --aggressive
+          
+          git commit -m "Sync: Diseño 900x900 con protección de textos y bypass 404" || echo "Sin cambios"
           git push origin main --force
